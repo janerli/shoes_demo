@@ -31,16 +31,21 @@ class OrdersTab(QWidget):
         layout.addWidget(self.scroll_area)
 
     def load_data(self):
-        query = ("""select 
-            o.order_id,
-            s.status_name,
-            pp.address,
-            o.order_date,
-            o.delivery_date,
-            o.items
-                from orders o 
-                 left join statuses s on o.status_id = s.status_id
-                 left join pickup_points pp on pp.pickup_point_id = o.pickup_point_id""")
+        query = """
+                SELECT o.order_id, 
+                       s.status_name, 
+                       pp.address, 
+                       o.order_date, 
+                       o.delivery_date, 
+                       GROUP_CONCAT(CONCAT(p.article, ':', oi.quantity) SEPARATOR ', ') as items
+                FROM orders o
+                         LEFT JOIN statuses s ON o.status_id = s.status_id
+                         LEFT JOIN pickup_points pp ON pp.pickup_point_id = o.pickup_point_id
+                         LEFT JOIN order_items oi ON oi.order_id = o.order_id
+                         LEFT JOIN products p ON oi.product_id = p.product_id
+                GROUP BY o.order_id
+                ORDER BY o.order_id DESC \
+                """
 
         orders = self.db.fetchall(query)
         self.clear_layout(self.scroll_layout)
@@ -70,18 +75,22 @@ class OrdersTab(QWidget):
         lbl_layout.setSpacing(5)
         lbl_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
-        order_id = QLabel(f"Номер заказа: {order['order_id']}")
+        order_id = QLabel(f"Артикул заказа: {order['order_id']}")
         order_id.setStyleSheet("font-weight: bold; border: none;")
         lbl_layout.addWidget(order_id)
 
         for text in [
             f"Статус заказа: {order['status_name']}",
             f"Дата заказа: {order['order_date']}",
-            f"Артикул: {order['items']}"
         ]:
             lbl = QLabel(text)
             lbl.setStyleSheet("border: none;")
             lbl_layout.addWidget(lbl)
+
+        items_text = order['items'] if order['items'] else "нет товаров"
+        items_lbl = QLabel(f"Товары {items_text}")
+        items_lbl.setStyleSheet("border: none;")
+        lbl_layout.addWidget(items_lbl)
 
         lbl_layout.addStretch()
         card_layout.addWidget(info_frame)
@@ -128,10 +137,14 @@ class OrdersTab(QWidget):
 
     def delete_order(self, order_id):
         reply = QMessageBox.question(self, "Удаление заказа", "Вы хотите удалить заказ?",
-                             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         if reply == QMessageBox.StandardButton.Yes:
-            self.db.execute("DELETE from orders where order_id = %s", (order_id,))
-            QMessageBox.information(self, "Успех", f"Заказ {order_id} удален")
+            # Сначала удаляем товары из заказа
+            self.db.execute("DELETE FROM order_items WHERE order_id = %s", (order_id,))
+            # Потом удаляем сам заказ
+            self.db.execute("DELETE FROM orders WHERE order_id = %s", (order_id,))
+            self.load_data()
+            QMessageBox.information(self, "Успех", f"Заказ {order_id} удалён")
 
     def clear_layout(self, layout):
         while layout.count():
